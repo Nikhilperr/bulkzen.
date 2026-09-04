@@ -1,0 +1,6 @@
+logs/*
+!logs/index.php
+uploads/*
+!uploads/index.php
+.DS_Store
+Thumbs.db

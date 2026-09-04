@@ -1,0 +1,22 @@
+BulkZen VPS — keep this OUT of ~/app (Jackpot Jungle).
+
+On the PC, upload only this folder:
+  c:\xampp\htdocs\automation\dist\bulkzen
+to the VPS as:
+  /home/deploy/bulkzen
+
+Never copy files into /home/deploy/app
+Never unzip anything inside /home/deploy/app
+
+After upload, on the VPS:
+  1. Edit /home/deploy/bulkzen/vps.php (database user + password)
+  2. Create MySQL database: bulkzen
+  3. Add nginx-bulkzen.conf as its own site on port 8088
+  4. Open http://157.245.93.210:8088/migrate_db.php once
+  5. Delete migrate_db.php
+  6. In Meta, add:
+       http://157.245.93.210:8088/fb-callback.php
+     and if you use the free name:
+       https://157-245-93-210.sslip.io/fb-callback.php
+
+The APK is NOT uploaded here. It stays on the phone.
