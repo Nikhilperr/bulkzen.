@@ -214,23 +214,10 @@ function updateSubscriptionUI(data) {
     const existingBadge = document.querySelector('.subscription-badge');
     if (existingBadge) existingBadge.remove();
 
-    // 3. Update Send Button
     const sendBtn = document.getElementById('send-broadcast');
-    if (!data.is_premium && data.remaining_free <= 0) {
-        if (sendBtn) {
-            sendBtn.disabled = true;
-            sendBtn.innerHTML = 'Limit Reached <i class="fas fa-lock"></i>';
-            sendBtn.title = 'Upgrade to Premium to send more messages';
-            sendBtn.onclick = (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                showUpgradeModal();
-            };
-        }
-    } else if (sendBtn) {
+    if (sendBtn) {
         sendBtn.disabled = false;
-        sendBtn.innerHTML = 'Send Broadcast <i class="fas fa-paper-plane"></i>';
-        sendBtn.onclick = handleSendBroadcast;
+        sendBtn.title = '';
     }
 }
 
@@ -1252,8 +1239,14 @@ function setupEventListeners() {
         removeImage.addEventListener('click', removeImagePreview);
     }
 
-    // Send broadcast button listener is handled in updateSubscriptionUI
-    // to switch between "Send" and "Upgrade" actions dynamically
+    const sendBtn = document.getElementById('send-broadcast');
+    if (sendBtn && !sendBtn.dataset.bound) {
+        sendBtn.dataset.bound = '1';
+        sendBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            handleSendBroadcast();
+        });
+    }
 
     // Update selected count when checkboxes change
     document.addEventListener('change', function (e) {

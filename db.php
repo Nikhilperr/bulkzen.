@@ -29,3 +29,16 @@ function getDbConnection() {
     
     return $conn;
 }
+
+function bulkzen_has_column($conn, $table, $column) {
+    static $cache = [];
+    $key = $table . '.' . $column;
+    if (array_key_exists($key, $cache)) {
+        return $cache[$key];
+    }
+    $table = preg_replace('/[^a-zA-Z0-9_]/', '', $table);
+    $column = preg_replace('/[^a-zA-Z0-9_]/', '', $column);
+    $res = @$conn->query("SHOW COLUMNS FROM `{$table}` LIKE '{$column}'");
+    $cache[$key] = $res && $res->num_rows > 0;
+    return $cache[$key];
+}

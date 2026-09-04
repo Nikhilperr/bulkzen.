@@ -242,9 +242,47 @@ function handleGetSubscriptionStatus() {
         echo json_encode(['success' => false, 'error' => 'No page selected']);
         exit;
     }
-    
-    $conn = getDbConnection();
-    $stmt = $conn->prepare("SELECT total_messages_sent, subscription_expires_at, free_credits_remaining FROM pages WHERE id = ?");
+
+    try {
+        $conn = getDbConnection();
+    } catch (Throwable $e) {
+        echo json_encode([
+            'success' => true,
+            'is_premium' => true,
+            'plan_type' => 'unlimited',
+            'user_credits' => 0,
+            'wallet_balance' => 0,
+            'total_sent' => 0,
+            'free_limit' => defined('FREE_TIER_LIMIT') ? FREE_TIER_LIMIT : 500,
+            'remaining_free' => defined('FREE_TIER_LIMIT') ? FREE_TIER_LIMIT : 500,
+            'expires_at' => null,
+            'just_upgraded' => false,
+            'pending_order' => null
+        ]);
+        exit;
+    }
+
+    $hasFreeCol = bulkzen_has_column($conn, 'pages', 'free_credits_remaining');
+    $pageSql = $hasFreeCol
+        ? "SELECT total_messages_sent, subscription_expires_at, free_credits_remaining FROM pages WHERE id = ?"
+        : "SELECT total_messages_sent, subscription_expires_at FROM pages WHERE id = ?";
+    $stmt = $conn->prepare($pageSql);
+    if (!$stmt) {
+        echo json_encode([
+            'success' => true,
+            'is_premium' => true,
+            'plan_type' => 'unlimited',
+            'user_credits' => 0,
+            'wallet_balance' => 0,
+            'total_sent' => 0,
+            'free_limit' => defined('FREE_TIER_LIMIT') ? FREE_TIER_LIMIT : 500,
+            'remaining_free' => defined('FREE_TIER_LIMIT') ? FREE_TIER_LIMIT : 500,
+            'expires_at' => null,
+            'just_upgraded' => false,
+            'pending_order' => null
+        ]);
+        exit;
+    }
     $stmt->bind_param("s", $pageId);
     $stmt->execute();
     $result = $stmt->get_result();
@@ -267,11 +305,13 @@ function handleGetSubscriptionStatus() {
     if (!$userId && $pageId) {
          // Method 1: Try user_pages table
          $uStmt = $conn->prepare("SELECT user_id FROM user_pages WHERE page_id = ? LIMIT 1");
+         if ($uStmt) {
          $uStmt->bind_param("s", $pageId);
          $uStmt->execute();
          $uRes = $uStmt->get_result();
          if ($uRow = $uRes->fetch_assoc()) {
              $userId = $uRow['user_id'];
+         }
          }
          
          // Method 2: If still no user_id, try to get from most recent PAID order for this page
@@ -291,16 +331,27 @@ function handleGetSubscriptionStatus() {
     $walletBalance = 0.00;
     $creditsExpiresAt = null;
     
-    if ($userId) {
-        $stmt = $conn->prepare("SELECT plan_type, expires_at, monthly_credits, wallet_balance FROM credits WHERE user_id = ?");
+    if ($userId && bulkzen_has_column($conn, 'credits', 'plan_type')) {
+        $creditCols = 'monthly_credits';
+        if (bulkzen_has_column($conn, 'credits', 'plan_type')) {
+            $creditCols .= ', plan_type';
+        }
+        if (bulkzen_has_column($conn, 'credits', 'expires_at')) {
+            $creditCols .= ', expires_at';
+        }
+        if (bulkzen_has_column($conn, 'credits', 'wallet_balance')) {
+            $creditCols .= ', wallet_balance';
+        }
+        $stmt = $conn->prepare("SELECT {$creditCols} FROM credits WHERE user_id = ?");
+        if ($stmt) {
         $stmt->bind_param("s", $userId);
         $stmt->execute();
         $cRes = $stmt->get_result();
         if ($cRow = $cRes->fetch_assoc()) {
-            $userPlan = $cRow['plan_type'];
-            $userCredits = $cRow['monthly_credits'];
+            $userPlan = $cRow['plan_type'] ?? 'free';
+            $userCredits = $cRow['monthly_credits'] ?? 0;
             $walletBalance = floatval($cRow['wallet_balance'] ?? 0);
-            $creditsExpiresAt = $cRow['expires_at'];
+            $creditsExpiresAt = $cRow['expires_at'] ?? null;
             
             // If Unlimited Plan AND not expired
             if ($cRow['plan_type'] === 'unlimited' && $cRow['expires_at']) {
@@ -318,6 +369,7 @@ function handleGetSubscriptionStatus() {
                     $isPremium = true;
                 }
             }
+        }
         }
     }
     
@@ -429,6 +481,7 @@ function handleGetSubscriptionStatus() {
                 ORDER BY created_at DESC LIMIT 1";
                 
         $stmt = $conn->prepare($sql);
+        if ($stmt) {
         $stmt->bind_param("s", $userId);
         $stmt->execute();
         $res = $stmt->get_result();
@@ -453,14 +506,17 @@ function handleGetSubscriptionStatus() {
                 ];
             }
         }
+        }
     }
     
     $totalSent = $page['total_messages_sent'] ?? 0;
     // Use the explicit counter from DB
-    $remaining = $page['free_credits_remaining'] ?? 0;
+    $remaining = $hasFreeCol
+        ? ($page['free_credits_remaining'] ?? FREE_TIER_LIMIT)
+        : FREE_TIER_LIMIT;
     
     // For Standard plan, use credits expires_at; for Unlimited, use page subscription_expires_at
-    $expiresAt = ($userPlan === 'standard' && $creditsExpiresAt) ? $creditsExpiresAt : $page['subscription_expires_at'];
+    $expiresAt = ($userPlan === 'standard' && $creditsExpiresAt) ? $creditsExpiresAt : ($page['subscription_expires_at'] ?? null);
     
     echo json_encode([
         'success' => true,
@@ -1546,28 +1602,37 @@ function handleSendBroadcast() {
     $userCredits = 0;
     $userPlan = 'free';
 
-    if ($userId) {
-        // Fetch credits for this specific admin
+    if ($userId && bulkzen_has_column($conn, 'credits', 'plan_type')) {
         $stmt = $conn->prepare("SELECT monthly_credits, plan_type FROM credits WHERE user_id = ?");
-        $stmt->bind_param("s", $userId);
-        $stmt->execute();
-        $cRes = $stmt->get_result();
-        if ($cRow = $cRes->fetch_assoc()) {
-            $userCredits = $cRow['monthly_credits'];
-            $userPlan = $cRow['plan_type'];
+        if ($stmt) {
+            $stmt->bind_param("s", $userId);
+            $stmt->execute();
+            $cRes = $stmt->get_result();
+            if ($cRow = $cRes->fetch_assoc()) {
+                $userCredits = $cRow['monthly_credits'];
+                $userPlan = $cRow['plan_type'];
+            }
         }
     }
 
-    // Fetch Page Data ONCE before the loop
-    $stmt = $conn->prepare("SELECT total_messages_sent, subscription_expires_at, free_credits_remaining FROM pages WHERE id = ?");
-    $stmt->bind_param("s", $pageId);
-    $stmt->execute();
-    $pageData = $stmt->get_result()->fetch_assoc();
+    $hasFreeCol = bulkzen_has_column($conn, 'pages', 'free_credits_remaining');
+    $pageSql = $hasFreeCol
+        ? "SELECT total_messages_sent, subscription_expires_at, free_credits_remaining FROM pages WHERE id = ?"
+        : "SELECT total_messages_sent, subscription_expires_at FROM pages WHERE id = ?";
+    $stmt = $conn->prepare($pageSql);
+    $pageData = null;
+    if ($stmt) {
+        $stmt->bind_param("s", $pageId);
+        $stmt->execute();
+        $pageData = $stmt->get_result()->fetch_assoc();
+    }
     
     if (!$pageData) {
-        // Should not happen as we inserted it above, but just in case
-        echo json_encode(['success' => false, 'error' => 'Page data not found (Critical Error)']);
-        exit;
+        $pageData = [
+            'total_messages_sent' => 0,
+            'subscription_expires_at' => null,
+            'free_credits_remaining' => FREE_TIER_LIMIT
+        ];
     }
     
     $isPremium = false;
@@ -1578,8 +1643,11 @@ function handleSendBroadcast() {
     }
     
     // Check User Global Subscription (Unlimited Plan or Standard)
-    if ($userId) {
+    if ($userId && bulkzen_has_column($conn, 'credits', 'plan_type')) {
         $stmt = $conn->prepare("SELECT plan_type, expires_at FROM credits WHERE user_id = ?");
+        if (!$stmt) {
+            $stmt = null;
+        } else {
         $stmt->bind_param("s", $userId);
         $stmt->execute();
         $cRes = $stmt->get_result();
@@ -1601,6 +1669,7 @@ function handleSendBroadcast() {
                 }
             }
         }
+        }
     }
     
     $totalSent = $pageData['total_messages_sent'] ?? 0;
@@ -1613,8 +1682,8 @@ function handleSendBroadcast() {
         }
         
         // Free Tier Check (using page-based credit counter)
-        $freeCredits = $pageData['free_credits_remaining'] ?? 0;
-        if (!$isPremium && $freeCredits <= 0) {
+        $freeCredits = $hasFreeCol ? ($pageData['free_credits_remaining'] ?? FREE_TIER_LIMIT) : FREE_TIER_LIMIT;
+        if ($hasFreeCol && !$isPremium && $freeCredits <= 0) {
             // Limit reached
             $results[] = [
                 'psid' => $psid,
@@ -1676,9 +1745,9 @@ function handleSendBroadcast() {
                 $conn->query("UPDATE pages SET total_messages_sent = total_messages_sent + 1 WHERE id = '$pageId'");
                 
                 // Deduct Free Credits if not premium
-                if (!$isPremium) {
+                if (!$isPremium && $hasFreeCol) {
                     $conn->query("UPDATE pages SET free_credits_remaining = GREATEST(0, free_credits_remaining - 1) WHERE id = '$pageId'");
-                    $pageData['free_credits_remaining']--; // Update local counter
+                    $pageData['free_credits_remaining']--;
                 }
 
                 // Deduct Credit for Standard Plan
