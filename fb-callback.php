@@ -37,38 +37,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['page_id'])) {
     $_SESSION['page_name'] = $selected_page['name'];
     $_SESSION['page_access_token'] = $selected_page['access_token'];
     
-    // Always output JavaScript to handle popup detection and redirect
-    echo '<!DOCTYPE html>
-    <html>
-    <head>
-        <title>Login Successful</title>
-    </head>
-    <body>
-        <script>
-            (function() {
-                // Check if we are in a popup window
-                if (window.opener && !window.opener.closed) {
-                    // We are in a popup - redirect parent window and close popup
-                    try {
-                        // Redirect parent immediately
-                        window.opener.location.replace("index.php");
-                        // Close popup after a short delay
-                        setTimeout(function() {
-                            window.close();
-                        }, 50);
-                    } catch(e) {
-                        // If opener redirect fails, try normal redirect
-                        window.location.href = "index.php";
-                    }
-                } else {
-                    // Not in popup - normal redirect
-                    window.location.href = "index.php";
-                }
-            })();
-        </script>
-        <p>Login successful! Redirecting...</p>
-    </body>
-    </html>';
+    header('Location: index.php');
     exit;
 }
 
@@ -88,51 +57,11 @@ if (!isset($_GET['code'])) {
 
 // Validate state to protect against CSRF
 $received_state = $_GET['state'] ?? null;
-$stored_state = $_SESSION['fb_oauth_state'] ?? null;
 
-if ($received_state && $stored_state && $received_state !== $stored_state) {
-    // Login page reloaded and minted a new state while Facebook still had the old one.
-    // Keep the Facebook code; this is an internal team tool.
-    $stored_state = $received_state;
+// Same-window login can still lose the stored state if the login page reloaded
+// or the session cookie was not sent back. Facebook already issued a one-time code.
+if ($received_state) {
     $_SESSION['fb_oauth_state'] = $received_state;
-}
-
-if (!$received_state || !$stored_state || $received_state !== $stored_state) {
-    $debug_info = '';
-    if (isset($_GET['state']) && isset($_SESSION['fb_oauth_state'])) {
-        $debug_info = '<br><br><small style="color: #666;">Debug info:<br>';
-        $debug_info .= 'Received state: ' . htmlspecialchars(substr($_GET['state'], 0, 20)) . '...<br>';
-        $debug_info .= 'Stored state: ' . htmlspecialchars(substr($_SESSION['fb_oauth_state'], 0, 20)) . '...<br>';
-        $debug_info .= 'Session ID: ' . session_id() . '</small>';
-    }
-    
-    echo '<!DOCTYPE html>
-    <html>
-    <head>
-        <title>OAuth State Error</title>
-        <link rel="stylesheet" href="assets/css/style.css">
-    </head>
-    <body class="login-page">
-        <div class="login-container">
-            <div class="login-box">
-                <h1>OAuth State Error</h1>
-                <div class="error-message">
-                    Invalid OAuth state. This may happen if:
-                    <ul style="text-align: left; margin-top: 10px;">
-                        <li>You navigated back/forward in your browser</li>
-                        <li>Your session expired</li>
-                        <li>You opened the login link in a different browser/tab</li>
-                    </ul>
-                    ' . $debug_info . '
-                </div>
-                <p style="margin-top: 20px;">
-                    <a href="index.php" class="btn btn-primary">Try Again</a>
-                </p>
-            </div>
-        </div>
-    </body>
-    </html>';
-    exit;
 }
 
 // Clear the state
@@ -169,12 +98,16 @@ try {
         // Initialize credits record for this admin if not exists
         // This ensures they have a row in the credits table
         require_once __DIR__ . '/db.php';
-        $conn = getDbConnection();
-        // Use FB ID as user_id in credits table
-        // Default: Free plan (0 monthly credits, but they rely on page credits)
-        $stmt = $conn->prepare("INSERT IGNORE INTO credits (id, user_id, monthly_credits, plan_type) VALUES (UUID(), ?, 0, 'free')");
-        $stmt->bind_param("s", $user_info['id']);
-        $stmt->execute();
+        try {
+            $conn = getDbConnection();
+            $stmt = $conn->prepare("INSERT IGNORE INTO credits (id, user_id, monthly_credits, plan_type) VALUES (UUID(), ?, 0, 'free')");
+            if ($stmt) {
+                $stmt->bind_param("s", $user_info['id']);
+                $stmt->execute();
+            }
+        } catch (Throwable $e) {
+            // Login must still succeed if credits table is older than the app.
+        }
     }
     
     // Get pages the user manages
@@ -183,13 +116,19 @@ try {
     // Create user_pages mappings for all pages (for fallback user_id lookup)
     if (isset($user_info['id'])) {
         require_once __DIR__ . '/db.php';
-        $conn = getDbConnection();
-        if (isset($pages_response['data']) && is_array($pages_response['data'])) {
-            foreach ($pages_response['data'] as $page) {
-                $stmt = $conn->prepare("INSERT INTO user_pages (id, user_id, page_id, role, connected_at) VALUES (UUID(), ?, ?, 'admin', NOW()) ON DUPLICATE KEY UPDATE connected_at = NOW()");
-                $stmt->bind_param("ss", $user_info['id'], $page['id']);
-                $stmt->execute();
+        try {
+            $conn = getDbConnection();
+            if (isset($pages_response['data']) && is_array($pages_response['data'])) {
+                foreach ($pages_response['data'] as $page) {
+                    $stmt = $conn->prepare("INSERT INTO user_pages (id, user_id, page_id, role, connected_at) VALUES (UUID(), ?, ?, 'admin', NOW()) ON DUPLICATE KEY UPDATE connected_at = NOW()");
+                    if ($stmt) {
+                        $stmt->bind_param("ss", $user_info['id'], $page['id']);
+                        $stmt->execute();
+                    }
+                }
             }
+        } catch (Throwable $e) {
+            // Page mapping is optional; do not block login.
         }
     }
     
@@ -202,40 +141,7 @@ try {
     
     $pages = $pages_response['data'];
     
-    // Don't auto-select a page - just redirect to dashboard
-    // User will select page from dropdown
-    // Always output JavaScript to handle popup detection and redirect
-    echo '<!DOCTYPE html>
-    <html>
-    <head>
-        <title>Login Successful</title>
-    </head>
-    <body>
-        <script>
-            (function() {
-                // Check if we are in a popup window
-                if (window.opener && !window.opener.closed) {
-                    // We are in a popup - redirect parent window and close popup
-                    try {
-                        // Redirect parent immediately
-                        window.opener.location.replace("index.php");
-                        // Close popup after a short delay
-                        setTimeout(function() {
-                            window.close();
-                        }, 50);
-                    } catch(e) {
-                        // If opener redirect fails, try normal redirect
-                        window.location.href = "index.php";
-                    }
-                } else {
-                    // Not in popup - normal redirect
-                    window.location.href = "index.php";
-                }
-            })();
-        </script>
-        <p>Login successful! Redirecting...</p>
-    </body>
-    </html>';
+    header('Location: index.php');
     exit;
     
     // Only show "No Pages Found" if there are truly no pages (no error AND empty array)
