@@ -12,12 +12,10 @@ $has_page_selected = isset($_SESSION['page_id']) && isset($_SESSION['page_access
 
 // If not logged in, show Facebook Login
 if (!$is_logged_in) {
-    // Generate OAuth state for CSRF protection
-    $state = bin2hex(random_bytes(16));
-    $_SESSION['fb_oauth_state'] = $state;
-    
-    // Ensure session data is written
-    session_write_close();
+    if (empty($_SESSION['fb_oauth_state'])) {
+        $_SESSION['fb_oauth_state'] = bin2hex(random_bytes(16));
+    }
+    $state = $_SESSION['fb_oauth_state'];
     
     // Build Facebook Login URL - add popup parameter to redirect URI for detection
     $redirectUri = FB_REDIRECT_URI . (strpos(FB_REDIRECT_URI, '?') !== false ? '&' : '?') . 'popup=1';
@@ -78,55 +76,8 @@ if (!$is_logged_in) {
         <link rel="icon" type="image/png" href="appicon.png" sizes="192x192">
         <link rel="icon" type="image/png" href="appicon.png" sizes="512x512">
         
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
         <link rel="stylesheet" href="assets/css/style.css">
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-        
-        <!-- Structured Data (JSON-LD) for SEO -->
-        <script type="application/ld+json">
-        {
-            "@context": "https://schema.org",
-            "@type": "SoftwareApplication",
-            "name": "BulkZen - Messenger Bulk Sender",
-            "applicationCategory": "BusinessApplication",
-            "description": "BulkZen - Professional Facebook Messenger bulk sender tool for businesses. Send mass messages to customers, manage conversations, and automate Facebook Page messaging with real-time progress tracking.",
-            "operatingSystem": "Web Browser",
-            "offers": {
-                "@type": "Offer",
-                "price": "0",
-                "priceCurrency": "USD"
-            },
-            "aggregateRating": {
-                "@type": "AggregateRating",
-                "ratingValue": "4.8",
-                "ratingCount": "150"
-            },
-            "featureList": [
-                "Bulk messaging to Facebook Page customers",
-                "Real-time progress tracking",
-                "Instant broadcast control",
-                "24-hour messaging window compliance",
-                "Message tag automation",
-                "Rich media support",
-                "Fast conversation loading"
-            ]
-        }
-        </script>
-        
-        <script>
-            // Facebook SDK will be loaded dynamically
-            (function(d, s, id) {
-                var js, fjs = d.getElementsByTagName(s)[0];
-                if (d.getElementById(id)) return;
-                js = d.createElement(s); js.id = id;
-                js.src = "https://connect.facebook.net/en_US/sdk.js";
-                js.async = true;
-                js.defer = true;
-                fjs.parentNode.insertBefore(js, fjs);
-            }(document, 'script', 'facebook-jssdk'));
-        </script>
     </head>
     <body class="login-page connect-only fb-login-look">
         <main class="fb-login-shell">
@@ -147,65 +98,8 @@ if (!$is_logged_in) {
         </main>
 
         <script>
-            // Facebook SDK initialization
-            window.fbAsyncInit = function() {
-                FB.init({
-                    appId: '<?php echo FB_APP_ID; ?>',
-                    cookie: true,
-                    xfbml: true,
-                    version: '<?php echo FB_GRAPH_API_VERSION; ?>'
-                });
-            };
-
-            function isBulkZenAndroid() {
-                return !!(window.BulkZenAndroid) || /BulkZenAndroid/i.test(navigator.userAgent);
-            }
-
-            // In the APK, stay in the same WebView. On desktop, keep the popup.
             function loginWithFacebook() {
-                var loginUrl = <?php echo json_encode($fbLoginUrl); ?>;
-                if (isBulkZenAndroid() || !window.open) {
-                    window.location.href = loginUrl;
-                    return;
-                }
-
-                const width = 600;
-                const height = 700;
-                const left = (screen.width - width) / 2;
-                const top = (screen.height - height) / 2;
-
-                const popup = window.open(
-                    loginUrl,
-                    'Facebook Login',
-                    `width=${width},height=${height},left=${left},top=${top},toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes`
-                );
-
-                if (!popup) {
-                    window.location.href = loginUrl;
-                    return;
-                }
-
-                const checkPopup = setInterval(function() {
-                    try {
-                        if (popup.closed) {
-                            clearInterval(checkPopup);
-                            setTimeout(function() {
-                                window.location.reload();
-                            }, 300);
-                            return;
-                        }
-                    } catch (e) {
-                    }
-                }, 200);
-
-                window.addEventListener('focus', function() {
-                    if (popup.closed) {
-                        clearInterval(checkPopup);
-                        setTimeout(function() {
-                            window.location.reload();
-                        }, 300);
-                    }
-                });
+                window.location.href = <?php echo json_encode($fbLoginUrl); ?>;
             }
         </script>
     </body>

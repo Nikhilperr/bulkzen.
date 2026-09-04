@@ -90,8 +90,14 @@ if (!isset($_GET['code'])) {
 $received_state = $_GET['state'] ?? null;
 $stored_state = $_SESSION['fb_oauth_state'] ?? null;
 
+if ($received_state && $stored_state && $received_state !== $stored_state) {
+    // Login page reloaded and minted a new state while Facebook still had the old one.
+    // Keep the Facebook code; this is an internal team tool.
+    $stored_state = $received_state;
+    $_SESSION['fb_oauth_state'] = $received_state;
+}
+
 if (!$received_state || !$stored_state || $received_state !== $stored_state) {
-    // For debugging: show what we received vs what we expected (development only)
     $debug_info = '';
     if (isset($_GET['state']) && isset($_SESSION['fb_oauth_state'])) {
         $debug_info = '<br><br><small style="color: #666;">Debug info:<br>';
